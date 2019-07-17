@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/base64"
 	"flag"
 	"fmt"
@@ -9,18 +8,17 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
-	"cloud.google.com/go/firestore"
-	firebase "firebase.google.com/go"
 	"github.com/gin-gonic/gin"
-	"google.golang.org/api/option"
+	d "github.com/hitian/telegram-messager/data"
 )
 
 var (
 	firebaseToken []byte
 	telegramToken = ""
-	firebaseApp   *firebase.App
-	store         *firestore.Client
+	// firebaseApp   *firebase.App
+	// store         *firestore.Client
 
 	encodeFirebaseTokenFile = flag.String("tokenFile", "", "firebase token file path")
 )
@@ -38,19 +36,6 @@ func main() {
 	if telegramToken == "" {
 		log.Fatal("telegram token empty")
 	}
-
-	firebaseOption := option.WithCredentialsJSON(firebaseToken)
-	var err error
-	firebaseApp, err = firebase.NewApp(context.Background(), nil, firebaseOption)
-	if err != nil {
-		log.Fatalf("firebase app create failed err: %s", err.Error())
-	}
-
-	store, err = firebaseApp.Firestore(context.Background())
-	if err != nil {
-		log.Fatalf("firebase store init failed err: %s", err.Error())
-	}
-	defer store.Close()
 
 	router := createRouter()
 
@@ -70,15 +55,24 @@ func createRouter() *gin.Engine {
 		c.String(http.StatusOK, "Hello World")
 	})
 
-	r.GET("/store", func(c *gin.Context) {
-		iter, err := store.Collection("channel").Documents(c.Request.Context()).GetAll()
+	r.GET("/list", func(c *gin.Context) {
+		ch, err := d.NewChannel(c.Request.Context(), firebaseToken)
 		if err != nil {
-			c.String(http.StatusBadRequest, "")
+			panic(err)
 		}
-		for _, data := range iter {
-			log.Println(data.Data())
+		defer ch.Close()
+
+		list, err := ch.GetAll()
+		if err != nil {
+			panic(err)
 		}
-		c.String(http.StatusOK, "test")
+
+		var output []string
+		for _, item := range list {
+			output = append(output, fmt.Sprintf("ID: %s", item.ID))
+		}
+
+		c.String(http.StatusOK, strings.Join(output, "\n"))
 	})
 
 	return r
