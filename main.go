@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -152,10 +153,7 @@ func initTelegramBot(router *gin.Engine) {
 				}
 				log.Printf("%d[%s] %s ", msg.Message.Chat.ID, msg.Message.From.UserName, msg.Message.Text)
 
-				responseMsg := tgbotapi.NewMessage(msg.Message.Chat.ID, msg.Message.Text)
-				responseMsg.ReplyToMessageID = msg.Message.MessageID
-
-				bot.Send(responseMsg)
+				botMessageProcess(bot, msg.Message)
 			}
 		}
 	}()
@@ -198,6 +196,63 @@ func initTelegramBot(router *gin.Engine) {
 
 		c.String(http.StatusOK, fmt.Sprintf("ok, send to %d user", len(channelInfo.Users)+1))
 	})
+}
+
+func botMessageProcess(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
+	if !message.IsCommand() {
+		bot.Send(buildBotResponse(message, "I can only process command now."))
+		return
+	}
+
+	command := message.Command()
+	args := message.CommandArguments()
+
+	var response *tgbotapi.MessageConfig
+	switch command {
+	case "follow":
+		response = botCommandFollow(message, args)
+	case "unfollow":
+		response = botCommandUnfollow(message, args)
+	case "new":
+		response = botCommandNewChannel(message, args)
+	default:
+		bot.Send(buildBotResponse(message, "command not defined"))
+		return
+	}
+	bot.Send(response)
+}
+
+func botCommandFollow(message *tgbotapi.Message, args string) *tgbotapi.MessageConfig {
+	return buildBotResponse(message, "")
+}
+func botCommandUnfollow(message *tgbotapi.Message, args string) *tgbotapi.MessageConfig {
+	return buildBotResponse(message, "")
+}
+func botCommandNewChannel(message *tgbotapi.Message, args string) *tgbotapi.MessageConfig {
+	log.Printf("create new channel: User: %d args: %s", message.Chat.ID, args)
+	userID := message.Chat.ID
+	channelName := strings.TrimSpace(args)
+
+	if !checkChannelName(channelName) {
+		return buildBotResponse(message, "name only accept [a-zA-Z0-9_]")
+	}
+
+	if userID != adminChatID {
+		return buildBotResponse(message, "only admin can create new channel")
+	}
+
+	return buildBotResponse(message, "")
+}
+
+func buildBotResponse(message *tgbotapi.Message, reply string) *tgbotapi.MessageConfig {
+	response := tgbotapi.NewMessage(message.Chat.ID, reply)
+	response.ReplyToMessageID = message.MessageID
+	return &response
+}
+
+func checkChannelName(name string) bool {
+	r, _ := regexp.Compile("^[0-9a-zA-Z_]{2,}$")
+	return r.MatchString(name)
 }
 
 func parseFirebaseToken(base64Token string) []byte {
