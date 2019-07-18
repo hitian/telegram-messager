@@ -2,11 +2,14 @@ package data
 
 import (
 	"context"
+	"errors"
 	"log"
 
 	"cloud.google.com/go/firestore"
 	firebase "firebase.google.com/go"
 	"google.golang.org/api/option"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 )
 
 var (
@@ -21,9 +24,11 @@ type Channel struct {
 }
 
 type ChannelData struct {
-	ID    string   `json:"id" firestore:"id"`
-	Token string   `json:"token" firestore:"token"`
-	Users []string `json:"users" firestore:"users"`
+	ID        string  `json:"id" firestore:"id"`
+	Token     string  `json:"token" firestore:"token"`
+	Owner     int64   `json:"owner" firestore:"owner"`
+	OwnerName string  `json:"owner_name" firestore:"owner_name"`
+	Users     []int64 `json:"users" firestore:"users"`
 }
 
 func NewChannel(ctx context.Context, token []byte) (*Channel, error) {
@@ -50,6 +55,22 @@ func (c *Channel) Close() {
 	c.store.Close()
 }
 
+func (c *Channel) Get(ID string) (*ChannelData, error) {
+	doc, err := c.db.Doc(ID).Get(c.ctx)
+	if err != nil {
+		//record not exists.
+		if grpc.Code(err) == codes.NotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var data ChannelData
+	if err = doc.DataTo(&data); err != nil {
+		return nil, err
+	}
+	return &data, nil
+}
+
 func (c *Channel) GetAll() ([]ChannelData, error) {
 	list := make([]ChannelData, 0)
 	iter, err := c.db.Documents(c.ctx).GetAll()
@@ -67,11 +88,36 @@ func (c *Channel) GetAll() ([]ChannelData, error) {
 }
 
 func (c *Channel) Create(data *ChannelData) error {
-	doc := c.db.NewDoc()
+	existData, err := c.Get(data.ID)
+	if err != nil {
+		return err
+	}
+	if existData != nil {
+		return errors.New("Channel Name exists")
+	}
+	doc := c.db.Doc(data.ID)
 	res, err := doc.Create(c.ctx, data)
 	if err != nil {
 		return err
 	}
 	log.Println("create ", res)
+	return nil
+}
+
+func (c *Channel) Remove(ID string) error {
+	res, err := c.db.Doc(ID).Delete(c.ctx)
+	if err != nil {
+		return err
+	}
+	log.Println(res)
+	return nil
+}
+
+func (c *Channel) Update(data *ChannelData) error {
+	res, err := c.db.Doc(data.ID).Set(c.ctx, data)
+	if err != nil {
+		return err
+	}
+	log.Println("update ok, ", res)
 	return nil
 }

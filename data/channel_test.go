@@ -4,6 +4,7 @@ import (
 	"context"
 	"io/ioutil"
 	"log"
+	"os"
 	"testing"
 )
 
@@ -16,7 +17,7 @@ func prepare(t *testing.T) {
 	if ch != nil {
 		return
 	}
-	tokenData, _ := ioutil.ReadFile("/Users/jia/.firebase.json")
+	tokenData, _ := ioutil.ReadFile(os.Getenv("HOME") + string(os.PathSeparator) + ".firebase.json")
 	token = tokenData
 	c, err := NewChannel(context.Background(), token)
 	if err != nil {
@@ -41,9 +42,11 @@ func TestCreate(t *testing.T) {
 	prepare(t)
 
 	row := &ChannelData{
-		ID:    "test_1",
-		Token: "fdjlskafjdas",
-		Users: []string{"tian"},
+		ID:        "channel_name",
+		Token:     "channel_token",
+		Users:     []int64{},
+		Owner:     12345678,
+		OwnerName: "admin",
 	}
 
 	err := ch.Create(row)
@@ -51,4 +54,58 @@ func TestCreate(t *testing.T) {
 		t.FailNow()
 	}
 
+}
+
+func TestGet(t *testing.T) {
+	prepare(t)
+	row, err := ch.Get("channel_name")
+	if err != nil {
+		log.Println(err)
+		t.FailNow()
+	}
+	if row == nil {
+		log.Println("data empty??")
+		t.FailNow()
+	}
+}
+
+func TestGetNotExistData(t *testing.T) {
+	prepare(t)
+	row, err := ch.Get("channel_name_not_exists")
+	if err != nil {
+		log.Println(err)
+		t.FailNow()
+	}
+	if row != nil {
+		log.Println("data exists??")
+		t.FailNow()
+	}
+}
+
+func TestRemove(t *testing.T) {
+	prepare(t)
+	err := ch.Remove("channel_name")
+	if err != nil {
+		log.Println(err)
+		t.FailNow()
+	}
+}
+
+func TestUpdate(t *testing.T) {
+	prepare(t)
+	data, err := ch.Get("channel_name")
+	if err != nil {
+		log.Println(err)
+		t.FailNow()
+	}
+	if data == nil {
+		log.Println("data not exist, skip")
+		return
+	}
+	data.Users = append(data.Users, 123456)
+	err = ch.Update(data)
+	if err != nil {
+		log.Println("update failed.", err)
+		t.FailNow()
+	}
 }
