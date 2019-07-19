@@ -138,16 +138,14 @@ func initTelegramBot(router *gin.Engine) {
 		c.String(http.StatusOK, "OK")
 	})
 
-	router.GET("/send/:name/:token/:data", func(c *gin.Context) {
+	send := func(c *gin.Context, channelID, token, data string) {
 		defer func() {
 			if err := recover(); err != nil {
 				c.String(http.StatusBadRequest, fmt.Sprintf("Error: %s", err))
 			}
 		}()
-		channelName := c.Param("name")
-		token := c.Param("token")
-		data := c.Param("data")
-		if channelName == "" || token == "" || data == "" {
+
+		if channelID == "" || token == "" || data == "" {
 			panic("wrong param")
 		}
 
@@ -157,7 +155,7 @@ func initTelegramBot(router *gin.Engine) {
 			panic("db connect err")
 		}
 		defer ch.Close()
-		channelInfo, err := ch.Get(channelName)
+		channelInfo, err := ch.Get(channelID)
 		if err != nil {
 			log.Println(err)
 			panic("channel info fetch err")
@@ -178,6 +176,32 @@ func initTelegramBot(router *gin.Engine) {
 		}
 
 		c.String(http.StatusOK, fmt.Sprintf("ok, send to %d user", len(channelInfo.Users)+1))
+	}
+
+	router.GET("/send/:name/:token/:data", func(c *gin.Context) {
+		channelName := c.Param("name")
+		token := c.Param("token")
+		data := c.Param("data")
+		if channelName == "" || token == "" || data == "" {
+			c.String(http.StatusBadRequest, "need more params")
+			return
+		}
+		send(c, channelName, token, data)
+	})
+
+	router.POST("/send/:name/:token", func(c *gin.Context) {
+		channelName := c.Param("name")
+		token := c.Param("token")
+		body, err := ioutil.ReadAll(c.Request.Body)
+		if err != nil {
+			c.String(http.StatusBadRequest, "read request body failed.")
+		}
+		data := string(body)
+		if channelName == "" || token == "" || data == "" {
+			c.String(http.StatusBadRequest, "need more params")
+			return
+		}
+		send(c, channelName, token, data)
 	})
 }
 
