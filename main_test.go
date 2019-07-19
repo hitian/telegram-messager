@@ -21,3 +21,10 @@ func TestCheckChannelName(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateToken(t *testing.T) {
+	str := generateToken()
+	if len(str) != 12 {
+		t.Fail()
+	}
+}

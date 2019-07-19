@@ -1,18 +1,21 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/apex/gateway"
 	"github.com/gin-gonic/gin"
@@ -83,26 +86,6 @@ func createRouter() *gin.Engine {
 		c.String(http.StatusOK, "Hello World")
 	})
 
-	r.GET("/list", func(c *gin.Context) {
-		ch, err := d.NewChannel(c.Request.Context(), firebaseToken)
-		if err != nil {
-			panic(err)
-		}
-		defer ch.Close()
-
-		list, err := ch.GetAll()
-		if err != nil {
-			panic(err)
-		}
-
-		var output []string
-		for _, item := range list {
-			output = append(output, fmt.Sprintf("ID: %s", item.ID))
-		}
-
-		c.String(http.StatusOK, strings.Join(output, "\n"))
-	})
-
 	r.GET("/sysinfo", func(c *gin.Context) {
 		c.String(http.StatusOK, fmt.Sprintf("NumGoroutine: %d", runtime.NumGoroutine()))
 	})
@@ -135,28 +118,25 @@ func initTelegramBot(router *gin.Engine) {
 		log.Printf("Telegram callback failed: %s", info.LastErrorMessage)
 	}
 
-	ch := make(chan tgbotapi.Update, bot.Buffer)
 	router.POST("/"+botURI, func(c *gin.Context) {
 		bytes, _ := ioutil.ReadAll(c.Request.Body)
-		var update tgbotapi.Update
-		json.Unmarshal(bytes, &update)
-		ch <- update
-	})
-
-	go func() {
-		for {
-			select {
-			case msg := <-ch:
-				if msg.Message == nil {
-					log.Println("incoming message empty. continue.")
-					continue
-				}
-				log.Printf("%d[%s] %s ", msg.Message.Chat.ID, msg.Message.From.UserName, msg.Message.Text)
-
-				botMessageProcess(bot, msg.Message)
-			}
+		if isDebug {
+			log.Println("callback received:", string(bytes))
 		}
-	}()
+		var update tgbotapi.Update
+		err := json.Unmarshal(bytes, &update)
+		if err != nil {
+			log.Printf("callback data decode failed: %s \n%s", err, string(bytes))
+			c.String(http.StatusInternalServerError, "request recode failed.")
+			return
+		}
+
+		if update.Message != nil {
+			log.Printf("%d[%s] %s ", update.Message.Chat.ID, update.Message.From.UserName, update.Message.Text)
+			botMessageProcess(bot, update.Message)
+		}
+		c.String(http.StatusOK, "OK")
+	})
 
 	router.GET("/send/:name/:token/:data", func(c *gin.Context) {
 		defer func() {
@@ -173,10 +153,13 @@ func initTelegramBot(router *gin.Engine) {
 
 		ch, err := d.NewChannel(c.Request.Context(), firebaseToken)
 		if err != nil {
+			log.Println(err)
 			panic("db connect err")
 		}
+		defer ch.Close()
 		channelInfo, err := ch.Get(channelName)
 		if err != nil {
+			log.Println(err)
 			panic("channel info fetch err")
 		}
 		if channelInfo == nil || channelInfo.Token != token {
@@ -199,6 +182,9 @@ func initTelegramBot(router *gin.Engine) {
 }
 
 func botMessageProcess(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
+	if isDebug {
+		log.Printf("botMessageProcess: %#v", message)
+	}
 	if !message.IsCommand() {
 		bot.Send(buildBotResponse(message, "I can only process command now."))
 		return
@@ -215,6 +201,8 @@ func botMessageProcess(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 		response = botCommandUnfollow(message, args)
 	case "new":
 		response = botCommandNewChannel(message, args)
+	case "myid":
+		response = buildBotResponse(message, fmt.Sprintf("%d", message.Chat.ID))
 	default:
 		bot.Send(buildBotResponse(message, "command not defined"))
 		return
@@ -228,20 +216,49 @@ func botCommandFollow(message *tgbotapi.Message, args string) *tgbotapi.MessageC
 func botCommandUnfollow(message *tgbotapi.Message, args string) *tgbotapi.MessageConfig {
 	return buildBotResponse(message, "")
 }
-func botCommandNewChannel(message *tgbotapi.Message, args string) *tgbotapi.MessageConfig {
+func botCommandNewChannel(message *tgbotapi.Message, args string) (result *tgbotapi.MessageConfig) {
 	log.Printf("create new channel: User: %d args: %s", message.Chat.ID, args)
 	userID := message.Chat.ID
 	channelName := strings.TrimSpace(args)
 
+	result = buildBotResponse(message, "")
+
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println("Error: ", err)
+			result.Text = fmt.Sprintf("Error: %s", err)
+		}
+	}()
+
 	if !checkChannelName(channelName) {
-		return buildBotResponse(message, "name only accept [a-zA-Z0-9_]")
+		panic("name only accept [a-zA-Z0-9_]")
 	}
 
 	if userID != adminChatID {
-		return buildBotResponse(message, "only admin can create new channel")
+		panic("only admin can create new channel")
 	}
 
-	return buildBotResponse(message, "")
+	ch, err := d.NewChannel(context.Background(), firebaseToken)
+	if err != nil {
+		log.Println("Error: ", err)
+		panic("db connect err")
+	}
+	defer ch.Close()
+
+	data := &d.ChannelData{
+		ID:        channelName,
+		Token:     generateToken(),
+		Owner:     userID,
+		OwnerName: message.Chat.UserName,
+	}
+
+	err = ch.Create(data)
+	if err != nil {
+		log.Println("Error: ", err)
+		panic("create channel failed")
+	}
+	result.Text = fmt.Sprintf("create channel ok\nID: %s\ntoken: %s", data.ID, data.Token)
+	return
 }
 
 func buildBotResponse(message *tgbotapi.Message, reply string) *tgbotapi.MessageConfig {
@@ -264,6 +281,16 @@ func parseFirebaseToken(base64Token string) []byte {
 		log.Fatalf("firebase token base64 decode err: %s", err.Error())
 	}
 	return token
+}
+
+func generateToken() string {
+	rand.Seed(time.Now().UnixNano())
+	var letter = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	b := make([]rune, 12)
+	for i := range b {
+		b[i] = letter[rand.Intn(len(letter))]
+	}
+	return string(b)
 }
 
 func tokenFileContentBase64Encode(filePath string) string {
