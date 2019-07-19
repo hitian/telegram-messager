@@ -166,7 +166,7 @@ func initTelegramBot(router *gin.Engine) {
 			panic("not allow")
 		}
 
-		message := decodeMessage(data)
+		message := decodeMessage(data) + "\n\nFrom [" + channelInfo.ID + "]"
 		//send to owner
 		tMessage := tgbotapi.NewMessage(channelInfo.Owner, message)
 		bot.Send(tMessage)
@@ -201,6 +201,10 @@ func botMessageProcess(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 		response = botCommandUnfollow(message, args)
 	case "new":
 		response = botCommandNewChannel(message, args)
+	case "list":
+		response = botCommandList(message, args)
+	case "token":
+		response = botCommandToken(message, args)
 	case "myid":
 		response = buildBotResponse(message, fmt.Sprintf("%d", message.Chat.ID))
 	default:
@@ -211,10 +215,135 @@ func botMessageProcess(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 }
 
 func botCommandFollow(message *tgbotapi.Message, args string) *tgbotapi.MessageConfig {
-	return buildBotResponse(message, "")
+	userID := message.Chat.ID
+	channelID := strings.TrimSpace(args)
+
+	if channelID == "" {
+		return buildBotResponse(message, "channel name can't empty")
+	}
+
+	ch, err := d.NewChannel(context.Background(), firebaseToken)
+	if err != nil {
+		log.Println("Error: ", err)
+		return buildBotResponse(message, "conect to db failed.")
+	}
+	defer ch.Close()
+
+	channelInfo, err := ch.Get(channelID)
+	if err != nil {
+		return buildBotResponse(message, err.Error())
+	}
+
+	if channelInfo == nil {
+		return buildBotResponse(message, "channel ID not exists")
+	}
+
+	if userID == channelInfo.Owner {
+		return buildBotResponse(message, "can't follow the channel you owned")
+	}
+
+	for _, user := range channelInfo.Users {
+		if user == userID {
+			return buildBotResponse(message, "already followed")
+		}
+	}
+
+	channelInfo.Users = append(channelInfo.Users, userID)
+	err = ch.Update(channelInfo)
+	if err != nil {
+		log.Println("update channel info failed ", err)
+		return buildBotResponse(message, "update failed")
+	}
+
+	return buildBotResponse(message, "followed "+channelInfo.ID)
 }
 func botCommandUnfollow(message *tgbotapi.Message, args string) *tgbotapi.MessageConfig {
-	return buildBotResponse(message, "")
+	userID := message.Chat.ID
+	channelID := strings.TrimSpace(args)
+
+	if channelID == "" {
+		return buildBotResponse(message, "channel name can't empty")
+	}
+
+	ch, err := d.NewChannel(context.Background(), firebaseToken)
+	if err != nil {
+		log.Println("Error: ", err)
+		return buildBotResponse(message, "conect to db failed.")
+	}
+	defer ch.Close()
+
+	channelInfo, err := ch.Get(channelID)
+	if err != nil {
+		return buildBotResponse(message, err.Error())
+	}
+
+	if channelInfo == nil {
+		return buildBotResponse(message, "channel ID not exists")
+	}
+
+	if userID == channelInfo.Owner {
+		return buildBotResponse(message, "can't unfollow the channel you owned")
+	}
+
+	isFound := false
+	for i, user := range channelInfo.Users {
+		if user == userID {
+			channelInfo.Users = append(channelInfo.Users[:i], channelInfo.Users[i+1:]...)
+			isFound = true
+			break
+		}
+	}
+	if !isFound {
+		return buildBotResponse(message, "not followed")
+	}
+
+	err = ch.Update(channelInfo)
+	if err != nil {
+		log.Println("update channel info failed ", err)
+		return buildBotResponse(message, "update failed")
+	}
+
+	return buildBotResponse(message, "unfollowed "+channelInfo.ID)
+}
+func botCommandList(message *tgbotapi.Message, args string) *tgbotapi.MessageConfig {
+	userID := message.Chat.ID
+
+	ch, err := d.NewChannel(context.Background(), firebaseToken)
+	if err != nil {
+		log.Println("Error: ", err)
+		return buildBotResponse(message, "conect to db failed.")
+	}
+	defer ch.Close()
+
+	list, err := ch.GetAll()
+	if err != nil {
+		log.Println("Error: ", err)
+		return buildBotResponse(message, "fetch list error")
+	}
+
+	ownedList := make([]string, 0)
+	followedList := make([]string, 0)
+
+	for _, item := range list {
+		if item.Owner == userID {
+			ownedList = append(ownedList, item.ID)
+		}
+		for _, follower := range item.Users {
+			if follower == userID {
+				followedList = append(followedList, item.ID)
+			}
+		}
+	}
+
+	result := []string{
+		"owned channel: ",
+	}
+	result = append(result, ownedList...)
+	result = append(result, "")
+	result = append(result, "followed channel: ")
+	result = append(result, followedList...)
+
+	return buildBotResponse(message, strings.Join(result, "\n"))
 }
 func botCommandNewChannel(message *tgbotapi.Message, args string) (result *tgbotapi.MessageConfig) {
 	log.Printf("create new channel: User: %d args: %s", message.Chat.ID, args)
@@ -259,6 +388,33 @@ func botCommandNewChannel(message *tgbotapi.Message, args string) (result *tgbot
 	}
 	result.Text = fmt.Sprintf("create channel ok\nID: %s\ntoken: %s", data.ID, data.Token)
 	return
+}
+
+func botCommandToken(message *tgbotapi.Message, args string) *tgbotapi.MessageConfig {
+	log.Printf("fetch channel token: User: %d args: %s", message.Chat.ID, args)
+	userID := message.Chat.ID
+	channelName := strings.TrimSpace(args)
+
+	ch, err := d.NewChannel(context.Background(), firebaseToken)
+	if err != nil {
+		log.Println("Error: ", err)
+		return buildBotResponse(message, err.Error())
+	}
+	defer ch.Close()
+
+	channelInfo, err := ch.Get(channelName)
+	if err != nil {
+		return buildBotResponse(message, err.Error())
+	}
+	if channelInfo == nil {
+		return buildBotResponse(message, "channel ID not exists")
+	}
+
+	if channelInfo.Owner != userID {
+		return buildBotResponse(message, "only owner can fetch token")
+	}
+
+	return buildBotResponse(message, fmt.Sprintf("token: %s", channelInfo.Token))
 }
 
 func buildBotResponse(message *tgbotapi.Message, reply string) *tgbotapi.MessageConfig {
