@@ -31,6 +31,7 @@ var (
 	adminChatID      int64
 	isLambda         bool
 	isDebug          = false
+	build            = ""
 
 	encodeFirebaseTokenFile = flag.String("tokenFile", "", "firebase token file path")
 )
@@ -87,7 +88,7 @@ func createRouter() *gin.Engine {
 	})
 
 	r.GET("/sysinfo", func(c *gin.Context) {
-		c.String(http.StatusOK, fmt.Sprintf("NumGoroutine: %d", runtime.NumGoroutine()))
+		c.String(http.StatusOK, fmt.Sprintf("Build: %s\nNumGoroutine: %d\nGo version: %s", build, runtime.NumGoroutine(), runtime.Version()))
 	})
 
 	return r

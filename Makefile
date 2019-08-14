@@ -6,7 +6,7 @@ clean:
 	rm -rf ./main ./upload.zip
 	
 build:
-	GOOS=linux GOARCH=amd64 go build -o ./main .
+	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.build=`date +'%Y-%m-%d_%H_%M_%S'`" -o ./main .
 
 upload:
 	zip -X -r ./upload.zip ./main
