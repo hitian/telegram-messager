@@ -1,0 +1,46 @@
+version: 2
+
+jobs:
+  go-build:
+    docker: 
+      - image: circleci/golang:latest
+    working_directory: ~/build
+    steps:
+      - checkout
+      - restore_cache: # restores saved cache if no changes are detected since last run
+          keys:
+            - go-mod-v4-{{ checksum "go.sum" }}
+      - run:
+          go test ./... -v
+      - run: |
+          make build
+      - save_cache:
+          key: go-mod-v4-{{ checksum "go.sum" }}
+          paths:
+            - "/go/pkg/mod"
+      - run: |
+          zip -X -r upload.zip main
+      - persist_to_workspace:
+          root: ~/build
+          paths:
+            - upload.zip
+  upload-lambda:
+    docker: 
+      - image: hitian/awscli:latest
+    working_directory: ~/build
+    steps:
+      - attach_workspace:
+          at: ~/build
+      - run: |
+          aws lambda update-function-code --function-name telegram-bot --zip-file fileb://upload.zip > /dev/null
+workflows:
+  version: 2
+  update-aws-lambda:
+    jobs:
+      - go-build:
+          filters:
+            branches:
+              only: master
+      - upload-lambda:
+          requires:
+            - go-build
