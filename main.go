@@ -232,6 +232,8 @@ func botMessageProcess(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 		response = botCommandToken(message, args)
 	case "myid":
 		response = buildBotResponse(message, fmt.Sprintf("%d", message.Chat.ID))
+	case "channel_users":
+		response = botCommentChannelUsers(message, args)
 	default:
 		bot.Send(buildBotResponse(message, "command not defined"))
 		return
@@ -412,6 +414,41 @@ func botCommandNewChannel(message *tgbotapi.Message, args string) (result *tgbot
 		panic("create channel failed")
 	}
 	result.Text = fmt.Sprintf("create channel ok\nID: %s\ntoken: %s", data.ID, data.Token)
+	return
+}
+
+func botCommentChannelUsers(message *tgbotapi.Message, args string) (result *tgbotapi.MessageConfig) {
+	log.Printf("channel list users: User: %d args: %s\n", message.Chat.ID, args)
+	userID := message.Chat.ID
+	channelName := strings.TrimSpace(args)
+	result = buildBotResponse(message, "")
+
+	ch, err := d.NewChannel(context.Background(), firebaseToken)
+	if err != nil {
+		log.Println("Error: ", err)
+		return buildBotResponse(message, err.Error())
+	}
+	defer ch.Close()
+
+	channelInfo, err := ch.Get(channelName)
+	if err != nil {
+		return buildBotResponse(message, err.Error())
+	}
+	if channelInfo == nil {
+		return buildBotResponse(message, "channel ID not exists")
+	}
+
+	if channelInfo.Owner != userID {
+		return buildBotResponse(message, "only owner can get user list")
+	}
+
+	var s strings.Builder
+	s.WriteString("channel members: ")
+	for _, userID := range channelInfo.Users {
+		fmt.Fprintf(&s, " %d\n", userID)
+	}
+	s.WriteString("\n===End===\n")
+	result.Text = s.String()
 	return
 }
 
