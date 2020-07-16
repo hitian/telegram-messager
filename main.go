@@ -233,7 +233,9 @@ func botMessageProcess(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	case "myid":
 		response = buildBotResponse(message, fmt.Sprintf("%d", message.Chat.ID))
 	case "channel_users":
-		response = botCommentChannelUsers(message, args)
+		response = botCommandChannelUsers(message, args)
+	case "channel_kick":
+		response = botCommandChannelKick(message, args)
 	default:
 		bot.Send(buildBotResponse(message, "command not defined"))
 		return
@@ -417,11 +419,16 @@ func botCommandNewChannel(message *tgbotapi.Message, args string) (result *tgbot
 	return
 }
 
-func botCommentChannelUsers(message *tgbotapi.Message, args string) (result *tgbotapi.MessageConfig) {
+func botCommandChannelUsers(message *tgbotapi.Message, args string) (result *tgbotapi.MessageConfig) {
 	log.Printf("channel list users: User: %d args: %s\n", message.Chat.ID, args)
 	userID := message.Chat.ID
 	channelName := strings.TrimSpace(args)
 	result = buildBotResponse(message, "")
+
+	if channelName == "" {
+		result.Text = "channel name cannot empty"
+		return
+	}
 
 	ch, err := d.NewChannel(context.Background(), firebaseToken)
 	if err != nil {
@@ -443,7 +450,73 @@ func botCommentChannelUsers(message *tgbotapi.Message, args string) (result *tgb
 	}
 
 	var s strings.Builder
-	s.WriteString("channel members: ")
+	s.WriteString("channel members: \n\n")
+	for _, userID := range channelInfo.Users {
+		fmt.Fprintf(&s, " %d\n", userID)
+	}
+	s.WriteString("\n===End===\n")
+	result.Text = s.String()
+	return
+}
+
+func botCommandChannelKick(message *tgbotapi.Message, args string) (result *tgbotapi.MessageConfig) {
+	log.Printf("channel kick: User: %d args: %s\n", message.Chat.ID, args)
+	userID := message.Chat.ID
+	result = buildBotResponse(message, "")
+	params := strings.Split(strings.TrimSpace(args), " ")
+	if len(params) != 2 {
+		result.Text = "wrong params, channel_kick [channel_name] [user_id]"
+		return
+	}
+
+	channelName := params[0]
+	targetUserID, err := strconv.ParseInt(params[1], 10, 64)
+	if err != nil {
+		result.Text = "params parse failed"
+		return
+	}
+
+	ch, err := d.NewChannel(context.Background(), firebaseToken)
+	if err != nil {
+		log.Println("Error: ", err)
+		return buildBotResponse(message, err.Error())
+	}
+	defer ch.Close()
+
+	channelInfo, err := ch.Get(channelName)
+	if err != nil {
+		return buildBotResponse(message, err.Error())
+	}
+	if channelInfo == nil {
+		return buildBotResponse(message, "channel ID not exists")
+	}
+
+	if channelInfo.Owner != userID {
+		return buildBotResponse(message, "only owner can do this")
+	}
+
+	isExist := false
+	for i, memberID := range channelInfo.Users {
+		if memberID == targetUserID {
+			copy(channelInfo.Users[i:], channelInfo.Users[i+1:])
+			channelInfo.Users = channelInfo.Users[:len(channelInfo.Users)-1]
+			isExist = true
+			break
+		}
+	}
+
+	if !isExist {
+		result.Text = "user not found"
+		return
+	}
+	err = ch.Update(channelInfo)
+	if err != nil {
+		log.Println("update channel info failed ", err)
+		return buildBotResponse(message, "update failed")
+	}
+
+	var s strings.Builder
+	s.WriteString(" current channel members: \n")
 	for _, userID := range channelInfo.Users {
 		fmt.Fprintf(&s, " %d\n", userID)
 	}
