@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -139,7 +140,7 @@ func initTelegramBot(router *gin.Engine) {
 		c.String(http.StatusOK, "OK")
 	})
 
-	send := func(c *gin.Context, channelID, token, data string) {
+	send := func(c *gin.Context, channelID, token, data string) error {
 		defer func() {
 			if err := recover(); err != nil {
 				c.String(http.StatusBadRequest, fmt.Sprintf("Error: %s", err))
@@ -147,22 +148,22 @@ func initTelegramBot(router *gin.Engine) {
 		}()
 
 		if channelID == "" || token == "" || data == "" {
-			panic("wrong param")
+			return errors.New("wrong params")
 		}
 
 		ch, err := d.NewChannel(c.Request.Context(), firebaseToken)
 		if err != nil {
-			log.Println(err)
-			panic("db connect err")
+			log.Println("db connect failed: ", err)
+			return errors.New("db connect failed with error")
 		}
 		defer ch.Close()
 		channelInfo, err := ch.Get(channelID)
 		if err != nil {
-			log.Println(err)
-			panic("channel info fetch err")
+			log.Println("fetch channel info failed:", err)
+			return errors.New("fetch channel info failed with error")
 		}
 		if channelInfo == nil || channelInfo.Token != token {
-			panic("not allow")
+			return errors.New("channel not exist or token not match")
 		}
 
 		message := decodeMessage(data) + "\n\nFrom [" + channelInfo.ID + "]"
@@ -177,6 +178,7 @@ func initTelegramBot(router *gin.Engine) {
 		}
 
 		c.String(http.StatusOK, fmt.Sprintf("ok, send to %d user", len(channelInfo.Users)+1))
+		return nil
 	}
 
 	router.GET("/send/:name/:token/:data", func(c *gin.Context) {
@@ -187,7 +189,10 @@ func initTelegramBot(router *gin.Engine) {
 			c.String(http.StatusBadRequest, "need more params")
 			return
 		}
-		send(c, channelName, token, data)
+		err := send(c, channelName, token, data)
+		if err != nil {
+			c.String(http.StatusBadRequest, err.Error())
+		}
 	})
 
 	router.POST("/send/:name/:token", func(c *gin.Context) {
@@ -196,13 +201,40 @@ func initTelegramBot(router *gin.Engine) {
 		body, err := ioutil.ReadAll(c.Request.Body)
 		if err != nil {
 			c.String(http.StatusBadRequest, "read request body failed.")
+			return
 		}
 		data := string(body)
 		if channelName == "" || token == "" || data == "" {
 			c.String(http.StatusBadRequest, "need more params")
 			return
 		}
-		send(c, channelName, token, data)
+		err = send(c, channelName, token, data)
+		if err != nil {
+			c.String(http.StatusBadRequest, err.Error())
+		}
+	})
+
+	router.POST("/send", func(c *gin.Context) {
+		channelName := c.GetHeader("X-ChannelName")
+		token := c.GetHeader("X-ChannelToken")
+		if channelName == "" || token == "" {
+			c.String(http.StatusBadRequest, "need more params")
+			return
+		}
+		body, err := ioutil.ReadAll(c.Request.Body)
+		if err != nil {
+			c.String(http.StatusBadRequest, "read request body failed.")
+			return
+		}
+		data := string(body)
+		if len(body) < 1 {
+			c.String(http.StatusBadRequest, "request body required.")
+			return
+		}
+		err = send(c, channelName, token, data)
+		if err != nil {
+			c.String(http.StatusBadRequest, err.Error())
+		}
 	})
 }
 
